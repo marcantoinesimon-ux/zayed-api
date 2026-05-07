@@ -1,57 +1,46 @@
 // api/flights.js
 // Tool: search_flights(origin, destination, month, cabin_class)
-// Called by ElevenLabs when Zayed needs to present Etihad flight options
+// Uses SerpApi to pull live Google Flights data for Etihad routes
 
 const AIRPORT_CODES = {
   // Origins — common Etihad markets
-  "london":        "LHR", "paris":        "CDG", "new york":    "JFK",
-  "sydney":        "SYD", "tokyo":        "NRT", "johannesburg":"JNB",
-  "mumbai":        "BOM", "bangkok":      "BKK", "seoul":       "ICN",
-  "kuala lumpur":  "KUL", "singapore":    "SIN", "frankfurt":   "FRA",
-  "amsterdam":     "AMS", "madrid":       "MAD", "rome":        "FCO",
-  "casablanca":    "CMN", "nairobi":      "NBO", "cairo":       "CAI",
-  "dubai":         "DXB", "abu dhabi":    "AUH", "doha":        "DOH",
-  "manchester":    "MAN", "milan":        "MXP", "zurich":      "ZRH",
+  "london":        "LHR", "paris":         "CDG", "new york":     "JFK",
+  "sydney":        "SYD", "tokyo":         "NRT", "johannesburg": "JNB",
+  "mumbai":        "BOM", "bangkok":       "BKK", "seoul":        "ICN",
+  "kuala lumpur":  "KUL", "singapore":     "SIN", "frankfurt":    "FRA",
+  "amsterdam":     "AMS", "madrid":        "MAD", "rome":         "FCO",
+  "casablanca":    "CMN", "nairobi":       "NBO", "cairo":        "CAI",
+  "dubai":         "DXB", "abu dhabi":     "AUH", "manchester":   "MAN",
+  "milan":         "MXP", "zurich":        "ZRH", "istanbul":     "IST",
+  "barcelona":     "BCN", "munich":        "MUC", "brussels":     "BRU",
 
   // Destinations — Etihad routes
-  "tbilisi":       "TBS", "lisbon":       "LIS", "athens":      "ATH",
-  "reykjavik":     "KEF", "iceland":      "KEF", "maldives":    "MLE",
-  "bali":          "DPS", "kyoto":        "KIX", "oaxaca":      "OAX",
-  "mexico city":   "MEX", "peru":         "LIM", "brazil":      "GRU",
-  "patagonia":     "AEP", "bhutan":       "PBH", "sri lanka":   "CMB",
-  "rwanda":        "KGL", "marrakech":    "RAK", "morocco":     "RAK",
-  "santorini":     "JTR", "mykonos":      "JMK", "prague":      "PRG",
-  "copenhagen":    "CPH", "slovenia":     "LJU", "ireland":     "DUB",
+  "tbilisi":       "TBS", "lisbon":        "LIS", "athens":       "ATH",
+  "reykjavik":     "KEF", "iceland":       "KEF", "maldives":     "MLE",
+  "bali":          "DPS", "kyoto":         "KIX", "oaxaca":       "OAX",
+  "mexico city":   "MEX", "peru":          "LIM", "brazil":       "GRU",
+  "sao paulo":     "GRU", "patagonia":     "AEP", "bhutan":       "PBH",
+  "sri lanka":     "CMB", "rwanda":        "KGL", "marrakech":    "RAK",
+  "morocco":       "RAK", "santorini":     "JTR", "mykonos":      "JMK",
+  "prague":        "PRG", "copenhagen":    "CPH", "slovenia":     "LJU",
+  "ireland":       "DUB", "dublin":        "DUB",
 };
 
 const CABIN_MAP = {
-  "economy":         "ECONOMY",
-  "premium economy": "PREMIUM_ECONOMY",
-  "premium":         "PREMIUM_ECONOMY",
-  "business":        "BUSINESS",
-  "business class":  "BUSINESS",
-  "first":           "FIRST",
-  "first class":     "FIRST",
+  "economy":         "1",
+  "premium economy": "2",
+  "premium":         "2",
+  "business":        "3",
+  "business class":  "3",
+  "first":           "4",
+  "first class":     "4",
 };
 
-// Etihad airline code
-const ETIHAD_CODE = "EY";
-
-async function getAmadeusToken() {
-  const response = await fetch("https://test.api.amadeus.com/v1/security/oauth2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=client_credentials&client_id=${process.env.AMADEUS_CLIENT_ID}&client_secret=${process.env.AMADEUS_CLIENT_SECRET}`,
-  });
-  if (!response.ok) throw new Error(`Amadeus auth failed: ${response.status}`);
-  const data = await response.json();
-  return data.access_token;
-}
+const CABIN_LABEL = { "1": "Economy", "2": "Premium Economy", "3": "Business", "4": "First" };
 
 function resolveAirport(input) {
   if (!input) return null;
   const key = input.toLowerCase().trim();
-  // Direct IATA code (3 letters)
   if (/^[a-z]{3}$/i.test(key)) return key.toUpperCase();
   return AIRPORT_CODES[key] || null;
 }
@@ -60,30 +49,24 @@ function resolveMonth(input) {
   const months = {
     january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
     july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
-    jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8,
-    sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7,
+    aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
   };
   const key = input?.toLowerCase().trim();
   return months[key] || parseInt(key) || null;
 }
 
-function formatFlightResult(offers, origin, destination, cabin) {
-  if (!offers || offers.length === 0) {
-    return `I don't see direct Etihad availability for ${origin} → ${destination} in that window on the test system, but Etihad flies via Abu Dhabi to most destinations globally. I'd recommend checking etihad.com for confirmed availability.`;
-  }
+function formatPrice(price) {
+  if (!price) return "price on request";
+  const num = typeof price === "string" ? parseFloat(price.replace(/[^0-9.]/g, "")) : price;
+  return isNaN(num) ? "price on request" : `USD ${Math.round(num).toLocaleString()}`;
+}
 
-  const topOffers = offers.slice(0, 3);
-  const lines = topOffers.map((offer, i) => {
-    const price = offer.price;
-    const itinerary = offer.itineraries?.[0];
-    const segment = itinerary?.segments?.[0];
-    const duration = itinerary?.duration?.replace("PT", "").replace("H", "h ").replace("M", "m").toLowerCase();
-    const priceStr = price ? `${price.currency} ${Math.round(price.total)}` : "price on request";
-    const stops = itinerary?.segments?.length > 1 ? `${itinerary.segments.length - 1} stop` : "direct";
-    return `Option ${i + 1}: ${priceStr} (${stops}, ${duration})`;
-  });
-
-  return `Here are Etihad flight options for ${origin} → ${destination} in ${cabin.toLowerCase()} class:\n${lines.join("\n")}\n\nAll Etihad flights connect through Abu Dhabi — worth considering a night or two there. Shall I help you with the full booking?`;
+function formatDuration(minutes) {
+  if (!minutes) return "";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 export default async function handler(req, res) {
@@ -99,55 +82,79 @@ export default async function handler(req, res) {
     const { origin = "AUH", destination, month, cabin_class = "economy" } = params;
 
     if (!destination) {
-      return res.status(200).json({ result: "I need a destination to search flights." });
+      return res.status(200).json({ result: "I need a destination to search for flights." });
     }
 
-    const originCode = resolveAirport(origin) || "AUH";
-    const destCode = resolveAirport(destination);
-    const cabin = CABIN_MAP[cabin_class?.toLowerCase()] || "ECONOMY";
-    const monthNum = resolveMonth(month);
+    const originCode  = resolveAirport(origin) || "AUH";
+    const destCode    = resolveAirport(destination);
+    const cabinCode   = CABIN_MAP[cabin_class?.toLowerCase()] || "1";
+    const cabinLabel  = CABIN_LABEL[cabinCode];
+    const monthNum    = resolveMonth(month);
 
     if (!destCode) {
       return res.status(200).json({
-        result: `I don't have an airport code for "${destination}" yet. Etihad flies to over 70 destinations from Abu Dhabi — let me suggest checking etihad.com directly for this route.`
+        result: `I don't have an airport code for "${destination}" yet. Etihad flies to over 70 destinations from Abu Dhabi — I'd recommend checking etihad.com directly for this route.`
       });
     }
 
-    // Build departure date: first day of target month, next year if month has passed
+    // Build departure date — mid-month of the target month
     const now = new Date();
     let year = now.getFullYear();
-    if (monthNum && monthNum <= now.getMonth() + 1) year++; // Use next year if month is past
+    if (monthNum && monthNum <= now.getMonth() + 1) year++;
     const monthStr = String(monthNum || now.getMonth() + 2).padStart(2, "0");
-    const departureDate = `${year}-${monthStr}-15`; // Mid-month as a proxy date
+    const departureDate = `${year}-${monthStr}-15`;
 
-    const token = await getAmadeusToken();
-
-    const params_url = new URLSearchParams({
-      originLocationCode:      originCode,
-      destinationLocationCode: destCode,
-      departureDate:           departureDate,
-      adults:                  "1",
-      travelClass:             cabin,
-      includedAirlineCodes:    ETIHAD_CODE,
-      max:                     "5",
-      currencyCode:            "USD",
+    // SerpApi Google Flights endpoint
+    const searchParams = new URLSearchParams({
+      engine:           "google_flights",
+      departure_id:     originCode,
+      arrival_id:       destCode,
+      outbound_date:    departureDate,
+      currency:         "USD",
+      hl:               "en",
+      travel_class:     cabinCode,
+      include_airlines: "EY",
+      api_key:          process.env.SERPAPI_KEY,
     });
 
-    const searchRes = await fetch(
-      `https://test.api.amadeus.com/v2/shopping/flight-offers?${params_url}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+    const response = await fetch(`https://serpapi.com/search?${searchParams}`);
+    if (!response.ok) throw new Error(`SerpApi error: ${response.status}`);
+
+    const data = await response.json();
+
+    const allFlights = [
+      ...(data.best_flights || []),
+      ...(data.other_flights || []),
+    ];
+
+    const etihadFlights = allFlights.filter(f =>
+      f.flights?.some(seg => seg.airline === "Etihad Airways" || seg.airline_logo?.includes("EY"))
     );
 
-    const searchData = await searchRes.json();
-    const offers = searchData.data || [];
+    const flightsToShow = (etihadFlights.length > 0 ? etihadFlights : allFlights).slice(0, 3);
 
-    const result = formatFlightResult(offers, originCode, destCode, cabin);
+    if (!flightsToShow.length) {
+      return res.status(200).json({
+        result: `I couldn't find Etihad availability for ${originCode} to ${destCode} for that period on Google Flights. Etihad connects most destinations via Abu Dhabi — worth checking etihad.com directly for confirmed routes and pricing.`
+      });
+    }
+
+    const lines = flightsToShow.map((f, i) => {
+      const price    = formatPrice(f.price);
+      const duration = formatDuration(f.total_duration);
+      const stops    = f.flights?.length > 1 ? `${f.flights.length - 1} stop` : "direct";
+      const airline  = f.flights?.[0]?.airline || "Etihad Airways";
+      return `Option ${i + 1}: ${price} — ${airline}, ${stops}${duration ? `, ${duration}` : ""}`;
+    });
+
+    const result = `Here are ${cabinLabel} class options for ${originCode} to ${destCode} around ${month || "your travel window"}:\n\n${lines.join("\n")}\n\nAll Etihad routes connect through Abu Dhabi — a city worth a night or two of your trip. Ready to confirm dates and move to booking?`;
+
     return res.status(200).json({ result });
 
   } catch (err) {
     console.error("Flights handler error:", err);
     return res.status(200).json({
-      result: "I couldn't pull live flight data right now, but Etihad has excellent connectivity from Abu Dhabi to this destination. I'd recommend visiting etihad.com for confirmed availability and pricing."
+      result: "I couldn't pull live flight data right now, but Etihad has excellent connectivity from Abu Dhabi to this destination. Shall I help you with the rest of your itinerary while you check etihad.com for fares?"
     });
   }
 }
