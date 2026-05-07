@@ -1,0 +1,13 @@
+{
+  "name": "zayed-etihad-api",
+  "version": "1.0.0",
+  "description": "Etihad Zayed AI Travel Advisor — Tool API handlers",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
